@@ -30,7 +30,7 @@ def auto_crop_image_filter(image, boundary_value=0):
     boundary_value (float|int): specifies the boundary value which will be cropped
     return (Image): a new image with cropped boundary
     """
-    msk = 1 - (image.image.squeeze() == boundary_value)
+    msk = (image.image.squeeze() != boundary_value).to(dtype=th.int64)
 
     rminmax = []
 
@@ -156,7 +156,7 @@ def remove_bed_filter(image, cropping=True):
     # morphological closing with ball as structuring element
     # fills up the lungs
     closing = sitk.BinaryMorphologicalClosingImageFilter()
-    closing.SetKernelRadius(sitk.sitkBall)
+    closing.SetKernelType(sitk.sitkBall)
     closing.SetKernelRadius(radius_closing)
     closing.SetForegroundValue(1)
     closing.SetNumberOfThreads(mp.cpu_count())

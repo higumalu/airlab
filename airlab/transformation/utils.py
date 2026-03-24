@@ -19,6 +19,10 @@ from ..utils import image as iutils
 
 import SimpleITK as sitk
 
+
+def _grid_sample(input_tensor, grid):
+    return F.grid_sample(input_tensor, grid, align_corners=False)
+
 def compute_grid(image_size, dtype=th.float32, device='cpu'):
 
     dim = len(image_size)
@@ -98,7 +102,7 @@ def warp_image(image, displacement):
     grid = compute_grid(image_size, dtype=image.dtype, device=image.device)
 
     # warp image
-    warped_image = F.grid_sample(image.image, displacement + grid)
+    warped_image = _grid_sample(image.image, displacement + grid)
 
     return iutils.Image(warped_image, image_size, image.spacing, image.origin)
 
@@ -233,7 +237,7 @@ class Diffeomorphic():
 
         for i in range(scaling):
             displacement_trans = displacement.transpose(1, 2).transpose(2, 3)
-            displacement = displacement + F.grid_sample(displacement, displacement_trans + grid)
+            displacement = displacement + _grid_sample(displacement, displacement_trans + grid)
 
         return displacement.transpose(1, 2).transpose(2, 3).squeeze()
 
@@ -245,9 +249,8 @@ class Diffeomorphic():
 
         for i in range(scaling):
             displacement_trans = displacement.transpose(1, 2).transpose(2, 3).transpose(3, 4)
-            displacement = displacement + F.grid_sample(displacement, displacement_trans + grid)
+            displacement = displacement + _grid_sample(displacement, displacement_trans + grid)
 
         return displacement.transpose(1, 2).transpose(2, 3).transpose(3, 4).squeeze()
-
 
 

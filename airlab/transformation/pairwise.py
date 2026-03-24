@@ -484,7 +484,8 @@ class NonParametricTransformation(_Transformation):
         self._tensor_size = [self._dim] + self._image_size.tolist()
 
         self.trans_parameters = Parameter(th.Tensor(*self._tensor_size))
-        self.trans_parameters.data.fill_(0)
+        with th.no_grad():
+            self.trans_parameters.fill_(0)
 
         self.to(dtype=self._dtype, device=self._device)
 
@@ -568,7 +569,8 @@ class _KernelTransformation(_Transformation):
 
         # create transformation parameters
         self.trans_parameters = Parameter(th.Tensor(*cp_grid))
-        self.trans_parameters.data.fill_(0)
+        with th.no_grad():
+            self.trans_parameters.fill_(0)
 
         # copy to gpu if needed
         self.to(dtype=self._dtype, device=self._device)

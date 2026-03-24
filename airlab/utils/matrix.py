@@ -30,7 +30,7 @@ class LaplaceMatrix():
         self.update()
 
     def update(self):
-        self.main_diag.data.fill_(0)
+        self.main_diag.zero_()
 
         for diag in self.diag_elements:
             self.main_diag[diag.edge_index[-1, :]] -= diag.edge_values
@@ -63,11 +63,11 @@ def band_mv(A, x):
 
 
 def expm_eig(A):
-    eigen_values, eigen_vector = th.eig(A, eigenvectors=True)
+    eigen_values, eigen_vector = th.linalg.eigh(A)
 
-    eigen_values.exp_()
+    eigen_values = eigen_values.exp()
 
-    return th.mm(th.mm(eigen_vector, th.diag(eigen_values[:, 0])), eigen_vector.t_())
+    return th.mm(th.mm(eigen_vector, th.diag(eigen_values)), eigen_vector.transpose(0, 1))
 
 
 def expm_krylov(A, x, phi=1, krylov_dim=30, inplace=True):
@@ -119,8 +119,6 @@ def expm_krylov(A, x, phi=1, krylov_dim=30, inplace=True):
         x.mul_(norm_x)
     else:
         return  th.mv(Q, exp_mat[:,0]).mul_(x)
-
-
 
 
 

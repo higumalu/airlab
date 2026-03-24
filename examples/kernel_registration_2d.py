@@ -76,7 +76,7 @@ def main():
 
         # define the regulariser for the displacement
         regulariser = al.regulariser.displacement.DiffusionRegulariser(mov_im_level.spacing)
-        regulariser.SetWeight(regularisation_weight[level])
+        regulariser.set_weight(regularisation_weight[level])
 
         registration.set_regulariser_displacement([regulariser])
 

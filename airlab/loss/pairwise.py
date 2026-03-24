@@ -22,6 +22,10 @@ from ..transformation import utils as tu
 from ..utils import kernelFunction as utils
 
 
+def _grid_sample(input_tensor, grid):
+    return F.grid_sample(input_tensor, grid, align_corners=False)
+
+
 
 # Loss base class (standard from PyTorch)
 class _PairwiseImageLoss(th.nn.modules.Module):
@@ -67,21 +71,22 @@ class _PairwiseImageLoss(th.nn.modules.Module):
         return (Tensor): maks array
         """
         # exclude points which are transformed outside the image domain
-        mask = th.zeros_like(self._fixed_image.image, dtype=th.uint8, device=self._device)
+        mask = th.zeros_like(self._fixed_image.image, dtype=th.bool, device=self._device)
         for dim in range(displacement.size()[-1]):
-            mask += displacement[..., dim].gt(1) + displacement[..., dim].lt(-1)
+            mask |= displacement[..., dim].gt(1) | displacement[..., dim].lt(-1)
 
-        mask = mask == 0
+        mask = ~mask
 
         # and exclude points which are masked by the warped moving and the fixed mask
         if not self._moving_mask is None:
-            self._warped_moving_mask = F.grid_sample(self._moving_mask.image, displacement)
+            self._warped_moving_mask = _grid_sample(self._moving_mask.image, displacement)
             self._warped_moving_mask = self._warped_moving_mask >= 0.5
 
             # if either the warped moving mask or the fixed mask is zero take zero,
             # otherwise take the value of mask
             if not self._fixed_mask is None:
-                mask = th.where(((self._warped_moving_mask == 0) | (self._fixed_mask == 0)), th.zeros_like(mask), mask)
+                fixed_mask = self._fixed_mask.image if hasattr(self._fixed_mask, "image") else self._fixed_mask
+                mask = th.where(((self._warped_moving_mask == 0) | (fixed_mask == 0)), th.zeros_like(mask), mask)
             else:
                 mask = th.where((self._warped_moving_mask == 0), th.zeros_like(mask), mask)
 
@@ -131,7 +136,7 @@ class MSE(_PairwiseImageLoss):
         mask = super(MSE, self).GetCurrentMask(displacement)
 
         # warp moving image with dispalcement field
-        self.warped_moving_image = F.grid_sample(self._moving_image.image, displacement)
+        self.warped_moving_image = _grid_sample(self._moving_image.image, displacement)
 
         # compute squared differences
         value = (self.warped_moving_image - self._fixed_image.image).pow(2)
@@ -172,7 +177,7 @@ class NCC(_PairwiseImageLoss):
         # compute current mask
         mask = super(NCC, self).GetCurrentMask(displacement)
 
-        self._warped_moving_image = F.grid_sample(self._moving_image.image, displacement)
+        self._warped_moving_image = _grid_sample(self._moving_image.image, displacement)
 
         moving_image_valid = th.masked_select(self._warped_moving_image, mask)
         fixed_image_valid = th.masked_select(self._fixed_image.image, mask)
@@ -206,7 +211,7 @@ class LCC(_PairwiseImageLoss):
         if kernel_type == "box":
             kernel_size = sigma*2 + 1
             self._kernel = th.ones(*kernel_size.tolist(), dtype=self._dtype, device=self._device) \
-                           / float(np.product(kernel_size)**2)
+                           / float(np.prod(kernel_size)**2)
         elif kernel_type == "gaussian":
             self._kernel = utils.gaussian_kernel(sigma, dim, asTensor=True, dtype=self._dtype, device=self._device)
 
@@ -264,10 +269,10 @@ class LCC(_PairwiseImageLoss):
 
         # compute current mask
         mask = super(LCC, self).GetCurrentMask(displacement)
-        mask = 1-mask
+        mask = ~mask
         mask = mask.to(dtype=self._dtype, device=self._device)
 
-        self._warped_moving_image = F.grid_sample(self._moving_image.image, displacement)
+        self._warped_moving_image = _grid_sample(self._moving_image.image, displacement)
 
         return self.return_loss(self._lcc_loss(self._warped_moving_image, mask))
 
@@ -352,7 +357,7 @@ class MI(_PairwiseImageLoss):
         # compute current mask
         mask = super(MI, self).GetCurrentMask(displacement)
 
-        self._warped_moving_image = F.grid_sample(self._moving_image.image, displacement)
+        self._warped_moving_image = _grid_sample(self._moving_image.image, displacement)
 
         moving_image_valid = th.masked_select(self._warped_moving_image, mask)
         fixed_image_valid = th.masked_select(self._fixed_image.image, mask)
@@ -463,7 +468,7 @@ class NGF(_PairwiseImageLoss):
         # compute current mask
         mask = super(NGF, self).GetCurrentMask(displacement)
 
-        self._warped_moving_image = F.grid_sample(self._moving_image.image, displacement)
+        self._warped_moving_image = _grid_sample(self._moving_image.image, displacement)
 
         # compute the gradient of the warped image
         ng_warped_image = self._ngf_loss(self._warped_moving_image)
@@ -512,7 +517,7 @@ class SSIM(_PairwiseImageLoss):
         self._name = "sim"
         self._kernel = None
 
-        dim = dim
+        dim = fixed_image.ndim if dim != fixed_image.ndim else dim
         sigma = np.array(sigma)
 
         if sigma.size != dim:
@@ -523,7 +528,7 @@ class SSIM(_PairwiseImageLoss):
         if kernel_type == "box":
             kernel_size = sigma * 2 + 1
             self._kernel = th.ones(*kernel_size.tolist()) \
-                           / float(np.product(kernel_size) ** 2)
+                           / float(np.prod(kernel_size) ** 2)
         elif kernel_type == "gaussian":
             self._kernel = utils.gaussian_kernel(sigma, dim, asTensor=True)
 
@@ -531,9 +536,16 @@ class SSIM(_PairwiseImageLoss):
 
         self._kernel = self._kernel.to(dtype=self._dtype, device=self._device)
 
+        if dim == 2:
+            self._convolve = F.conv2d
+        elif dim == 3:
+            self._convolve = F.conv3d
+        else:
+            raise ValueError("SSIM only supports 2D and 3D images")
+
         # calculate mean and variance of the fixed image
-        self._mean_fixed_image = F.conv2d(self._fixed_image.image, self._kernel)
-        self._variance_fixed_image = F.conv2d(self._fixed_image.image.pow(2), self._kernel) \
+        self._mean_fixed_image = self._convolve(self._fixed_image.image, self._kernel)
+        self._variance_fixed_image = self._convolve(self._fixed_image.image.pow(2), self._kernel) \
                                      - (self._mean_fixed_image.pow(2))
 
     def forward(self, displacement):
@@ -542,20 +554,20 @@ class SSIM(_PairwiseImageLoss):
 
         # compute current mask
         mask = super(SSIM, self).GetCurrentMask(displacement)
-        mask = 1 - mask
+        mask = ~mask
         mask = mask.to(dtype=self._dtype, device=self._device)
 
-        self._warped_moving_image = F.grid_sample(self._moving_image.image, displacement)
+        self._warped_moving_image = _grid_sample(self._moving_image.image, displacement)
 
-        mask = F.conv2d(mask, self._kernel)
+        mask = self._convolve(mask, self._kernel)
         mask = mask == 0
 
-        mean_moving_image = F.conv2d(self._warped_moving_image, self._kernel)
+        mean_moving_image = self._convolve(self._warped_moving_image, self._kernel)
 
-        variance_moving_image = F.conv2d(self._warped_moving_image.pow(2), self._kernel) - (
+        variance_moving_image = self._convolve(self._warped_moving_image.pow(2), self._kernel) - (
             mean_moving_image.pow(2))
 
-        mean_fixed_moving_image = F.conv2d(self._fixed_image.image * self._warped_moving_image, self._kernel)
+        mean_fixed_moving_image = self._convolve(self._fixed_image.image * self._warped_moving_image, self._kernel)
 
         covariance_fixed_moving = (mean_fixed_moving_image - mean_moving_image * self._mean_fixed_image)
 
@@ -575,4 +587,3 @@ class SSIM(_PairwiseImageLoss):
         value = -1.0 * th.masked_select(sim, mask)
 
         return self.return_loss(value)
-

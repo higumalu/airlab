@@ -114,7 +114,7 @@ class PairwiseRegistration(_PairwiseRegistration):
 
         if self._verbose:
             for loss_value, loss_name in zip(lossList, loss_names):
-                print(str(loss_name) + ": " + str(loss_value.data.item()) + " ", end='', flush=True)
+                print(str(loss_name) + ": " + str(loss_value.item()) + " ", end='', flush=True)
             print("")
 
         # sum up all loss terms
@@ -175,7 +175,7 @@ class DemonsRegistraion(_Registration):
 
         if self._verbose:
             for loss_value, loss_name in zip(lossList, loss_names):
-                print(str(loss_name) + ": " + str(loss_value.data.item()) + " ", end='', flush=True)
+                print(str(loss_name) + ": " + str(loss_value.item()) + " ", end='', flush=True)
 
             print("")
 
@@ -196,5 +196,4 @@ class DemonsRegistraion(_Registration):
 
             for regulariser in self._regulariser:
                 regulariser.regularise(self._transformation.parameters())
-
 

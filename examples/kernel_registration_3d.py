@@ -16,10 +16,28 @@
 import os, sys, time
 import torch as th
 import numpy as np
+import SimpleITK as sitk
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+EXAMPLE_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(os.path.dirname(EXAMPLE_DIR))
+sys.path.append(os.path.dirname(EXAMPLE_DIR))
 
 import airlab as al
+
+
+def create_fallback_images(dtype, device):
+    fixed = th.zeros(64, 64, 64, dtype=dtype, device=device)
+    moving = th.zeros(64, 64, 64, dtype=dtype, device=device)
+    fixed[18:42, 18:42, 18:42] = 1.0
+    moving[14:38, 21:45, 16:40] = 1.0
+    spacing = [1, 1, 1]
+    origin = [0, 0, 0]
+    return (
+        al.Image(fixed, [64, 64, 64], spacing, origin),
+        al.Image(moving, [64, 64, 64], spacing, origin),
+        None,
+        None,
+    )
 
 
 def main():
@@ -49,10 +67,17 @@ def main():
     using_landmarks = True
 
     print("loading images")
-    (fixed_image, fixed_points) = loader.load(p1_name, p1_img_nr)
-    (moving_image, moving_points) = loader.load(p2_name, p2_img_nr)
-    fixed_image.to(dtype, device)
-    moving_image.to(dtype, device)
+    using_fallback_data = False
+    try:
+        (fixed_image, fixed_points) = loader.load(p1_name, p1_img_nr)
+        (moving_image, moving_points) = loader.load(p2_name, p2_img_nr)
+        fixed_image.to(dtype, device)
+        moving_image.to(dtype, device)
+    except Exception as exc:
+        using_fallback_data = True
+        print("Falling back to synthetic 3D example data because external dataset loading failed:")
+        print(str(exc))
+        fixed_image, moving_image, fixed_points, moving_points = create_fallback_images(dtype, device)
 
     if fixed_points is None or moving_points is None:
         using_landmarks = False
@@ -62,11 +87,16 @@ def main():
         print("initial TRE: "+str(initial_tre))
 
     print("preprocessing images")
-    (fixed_image, fixed_body_mask) = al.remove_bed_filter(fixed_image)
-    (moving_image, moving_body_mask) = al.remove_bed_filter(moving_image)
+    if using_fallback_data:
+        fixed_image, moving_image = al.utils.normalize_images(fixed_image, moving_image)
+        fixed_body_mask = None
+        moving_body_mask = None
+    else:
+        (fixed_image, fixed_body_mask) = al.remove_bed_filter(fixed_image)
+        (moving_image, moving_body_mask) = al.remove_bed_filter(moving_image)
 
-    # normalize image intensities using common minimum and common maximum
-    fixed_image, moving_image = al.utils.normalize_images(fixed_image, moving_image)
+        # normalize image intensities using common minimum and common maximum
+        fixed_image, moving_image = al.utils.normalize_images(fixed_image, moving_image)
 
     # only perform center of mass alignment if inter subject registration is performed
     if p1_name == p2_name:
@@ -132,7 +162,7 @@ def main():
 
         # define the regulariser for the displacement
         regulariser = al.regulariser.displacement.DiffusionRegulariser(mov_im_level.spacing)
-        regulariser.SetWeight(regularisation_weight[level])
+        regulariser.set_weight(regularisation_weight[level])
 
         registration.set_regulariser_displacement([regulariser])
 
@@ -151,7 +181,7 @@ def main():
         # generate SimpleITK displacement field and calculate TRE
         tmp_displacement = al.transformation.utils.upsample_displacement(current_displacement.clone().to(device='cpu'),
                                                                          m_image.size, interpolation="linear")
-        tmp_displacement = al.transformation.utils.unit_displacement_to_dispalcement(tmp_displacement)  # unit measures to image domain measures
+        tmp_displacement = al.transformation.utils.unit_displacement_to_displacement(tmp_displacement)  # unit measures to image domain measures
         tmp_displacement = al.create_displacement_image_from_image(tmp_displacement, m_image)
         tmp_displacement.write('/tmp/bspline_displacement_image_level_'+str(level)+'.vtk')
 
@@ -162,7 +192,7 @@ def main():
     # create final result
     displacement = transformation.get_displacement()
     warped_image = al.transformation.utils.warp_image(m_image, displacement)
-    displacement = al.transformation.utils.unit_displacement_to_dispalcement(displacement) # unit measures to image domain measures
+    displacement = al.transformation.utils.unit_displacement_to_displacement(displacement) # unit measures to image domain measures
     displacement = al.create_displacement_image_from_image(displacement, m_image)
 
     end = time.time()

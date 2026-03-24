@@ -61,17 +61,13 @@ class GaussianRegulariser(_DemonsRegulariser):
 
 
     def _regularise_2d(self, data):
-
-        data.data = data.data.unsqueeze(0)
-        data.data = F.conv2d(data.data, self._kernel.contiguous(), padding=self._padding, groups=2)
-        data.data = data.data.squeeze()
+        regularised = F.conv2d(data.unsqueeze(0), self._kernel.contiguous(), padding=self._padding, groups=2)
+        data.copy_(regularised.squeeze(0))
 
 
     def _regularise_3d(self, data):
-
-        data.data = data.data.unsqueeze(0)
-        data.data = F.conv3d(data.data, self._kernel, padding=self._padding, groups=3)
-        data.data = data.data.squeeze()
+        regularised = F.conv3d(data.unsqueeze(0), self._kernel, padding=self._padding, groups=3)
+        data.copy_(regularised.squeeze(0))
 
     def regularise(self, data):
         for parameter in data:
@@ -200,7 +196,7 @@ class EdgeUpdaterDisplacementIntensities(_GraphEdgeWeightUpdater):
                 max_grad = th.zeros_like(image_gradient_A)
                 index = (norm_A - max_norm) == 0
                 max_grad[index] = image_gradient_A[index]
-                max_grad[1 - index] = image_gradient_B[1 - index]
+                max_grad[~index] = image_gradient_B[~index]
 
                 del index, image_gradient_A, image_gradient_B
 
@@ -248,13 +244,12 @@ class EdgeUpdaterDisplacementIntensities(_GraphEdgeWeightUpdater):
 
                 max_norm = th.max(norm_A, norm_B)
 
-                del norm_A, norm_B
-
                 max_grad = th.zeros_like(image_gradient_A)
                 index = (norm_A - max_norm) == 0
                 max_grad[index] = image_gradient_A[index]
-                max_grad[1 - index] = image_gradient_B[1 - index]
+                max_grad[~index] = image_gradient_B[~index]
 
+                del norm_A, norm_B
                 del index, image_gradient_A, image_gradient_B
 
                 phi_A = th.div(th.sum(th.mul(max_grad, displacement_A.t()), dim=1), th.mul(norm_disp_A, max_norm) + 1e-10)
@@ -309,13 +304,11 @@ class GraphDiffusionRegulariser(_DemonsRegulariser):
 
                 # compute the graph diffusion regularisation for each dimension
                 for i in range(dim):
-                    mat.expm_krylov(self._graph.laplace_matrix, parameter.data[i, ...].view(-1),
+                    mat.expm_krylov(self._graph.laplace_matrix, parameter[i, ...].view(-1),
                                     phi=self._phi, krylov_dim=self._krylov_dim)
 
                 # update the edge weights on the curren data
-                self._edge_updater.update(parameter.data)
-
-
+                self._edge_updater.update(parameter)
 
 
 
